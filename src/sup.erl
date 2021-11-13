@@ -17,7 +17,7 @@
 -type error_reason() ::
         {duplicate_child_id, child_id()}
       | {unknown_child_id, child_id()}
-      | {start_child, term()}
+      | {start_child, child_id(), term()}
       | {child_already_stopping, child_id()}.
 
 -type state() ::
@@ -157,7 +157,9 @@ start_children([{Id, Spec} | Children], State) ->
     {ok, _, State2} ->
       start_children(Children, State2);
     {error, Reason} ->
-      {stop, {child_start, Reason}}
+      ?LOG_ERROR("cannot start child ~0tp: ~tp", [Id, Reason]),
+      stop_children(State),
+      {stop, Reason}
   end.
 
 -spec stop_children(state()) -> ok.
@@ -199,7 +201,7 @@ do_start_child(Id, Spec = #{start := Start}, State) ->
       Child = #{spec => Spec, pid => Pid},
       {ok, Child, add_child(Id, Child, State)};
     {error, Reason} ->
-      {error, {start_child, Reason}}
+      {error, {start_child, Id, Reason}}
   end.
 
 -spec do_stop_child(child_id(), term(), state()) ->

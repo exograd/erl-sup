@@ -9,3 +9,15 @@ static_children_test() ->
   ?assert(lists:all(fun erlang:is_process_alive/1, maps:values(Children))),
   static_sup:stop(),
   ?assertNot(lists:any(fun erlang:is_process_alive/1, maps:values(Children))).
+
+init_error_test() ->
+  process_flag(trap_exit, true),
+  ?assertMatch({error, {start_child, b, _}}, init_error_sup:start_link()),
+  ?assertEqual(undefined, erlang:whereis(a)),
+  ?assertEqual(undefined, erlang:whereis(b)).
+
+init_exception_test() ->
+  process_flag(trap_exit, true),
+  ?assertMatch({error, {start_child, b, _}}, init_exception_sup:start_link()),
+  ?assertEqual(undefined, erlang:whereis(a)),
+  ?assertEqual(undefined, erlang:whereis(b)).

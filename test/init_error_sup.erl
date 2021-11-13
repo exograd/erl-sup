@@ -1,4 +1,4 @@
--module(static_sup).
+-module(init_error_sup).
 
 -behaviour(sup).
 
@@ -20,7 +20,4 @@ children() ->
         start_args => [a, #{}]},
     b =>
       #{start => fun test_child:start_link/2,
-        start_args => [b, #{}]},
-    c =>
-      #{start => fun test_child:start_link/2,
-        start_args => [c, #{}]}}.
+        start_args => [b, #{init_error => {error, e1}}]}}.
