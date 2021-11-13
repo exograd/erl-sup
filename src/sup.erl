@@ -12,7 +12,7 @@
               child_specs/0, start_fun/0, stop_fun/0]).
 
 -type options() ::
-        #{}.
+        #{stop_timeout := pos_integer()}.
 
 -type error_reason() ::
         {duplicate_child_id, child_id()}
@@ -212,7 +212,8 @@ do_stop_child(Id, Reason, State = #{children := Children}) ->
       {error, {child_already_stopping, Id}};
     {ok, Child} ->
       call_stop(Child, Reason),
-      Timer = erlang:send_after(5000, self(), {stop_timeout, Id}),
+      Timeout = stop_timeout(State),
+      Timer = erlang:send_after(Timeout, self(), {stop_timeout, Id}),
       Child2 = Child#{stop_timer => Timer},
       {ok, State#{children => Children#{Id => Child2}}};
     error ->
@@ -255,3 +256,9 @@ remove_child(Id, Pid, State = #{children_ids := Ids, children := Children}) ->
     error ->
       error({unknown_child_id, Id})
   end.
+
+-spec stop_timeout(state()) -> pos_integer().
+stop_timeout(#{options := #{stop_timeout := Timeout}}) ->
+  Timeout;
+stop_timeout(_) ->
+  5000.
