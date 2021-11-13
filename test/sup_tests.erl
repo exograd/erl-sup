@@ -29,3 +29,20 @@ dynamic_child_test() ->
   ?assert(erlang:is_process_alive(D)),
   static_sup:stop(),
   ?assertNot(erlang:is_process_alive(D)).
+
+dynamic_init_error_test() ->
+  {ok, Sup} = static_sup:start_link(),
+  ?assertMatch({error, e1},
+               sup:start_child(Sup, d1,
+                               #{start => fun test_child:start_link/2,
+                                 start_args => [d1, #{init_error => e1}]})),
+  static_sup:stop().
+
+dynamic_init_exception_test() ->
+  {ok, Sup} = static_sup:start_link(),
+  ?assertMatch({error, {e1, _Trace}},
+               sup:start_child(Sup, d1,
+                               #{start => fun test_child:start_link/2,
+                                 start_args =>
+                                   [d1, #{init_exception => {error, e1}}]})),
+  static_sup:stop().

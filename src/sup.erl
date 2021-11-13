@@ -159,7 +159,24 @@ start_children([{Id, Spec} | Children], State) ->
     {error, Reason} ->
       ?LOG_ERROR("cannot start child ~0tp: ~tp", [Id, Reason]),
       stop_children(State),
-      {stop, Reason}
+      {stop, {start_child, Id, Reason}}
+  end.
+
+-spec do_start_child(child_id(), child_spec(), state()) ->
+        {ok, child(), state()} | {error, error_reason()}.
+do_start_child(Id, _Spec, #{children := Children}) when
+    is_map_key(Id, Children) ->
+  {error, {duplicate_child_id, Id}};
+do_start_child(Id, Spec = #{start := Start}, State) ->
+  ?LOG_DEBUG("starting child ~0tp (start: ~0tp)", [Id, Start]),
+  Args = maps:get(start_args, Spec, []),
+  case erlang:apply(Start, Args) of
+    {ok, Pid} ->
+      ?LOG_DEBUG("child ~0tp started (pid: ~p)", [Id, Pid]),
+      Child = #{spec => Spec, pid => Pid},
+      {ok, Child, add_child(Id, Child, State)};
+    {error, Reason} ->
+      {error, Reason}
   end.
 
 -spec stop_children(state()) -> ok.
@@ -185,23 +202,6 @@ wait_for_children(State = #{children := Children}) ->
     {'EXIT', Pid, _} ->
       Id = child_id(Pid, State),
       wait_for_children(remove_child(Id, Pid, State))
-  end.
-
--spec do_start_child(child_id(), child_spec(), state()) ->
-        {ok, child(), state()} | {error, error_reason()}.
-do_start_child(Id, _Spec, #{children := Children}) when
-    is_map_key(Id, Children) ->
-  {error, {duplicate_child_id, Id}};
-do_start_child(Id, Spec = #{start := Start}, State) ->
-  ?LOG_DEBUG("starting child ~0tp (start: ~0tp)", [Id, Start]),
-  Args = maps:get(start_args, Spec, []),
-  case erlang:apply(Start, Args) of
-    {ok, Pid} ->
-      ?LOG_DEBUG("child ~0tp started (pid: ~p)", [Id, Pid]),
-      Child = #{spec => Spec, pid => Pid},
-      {ok, Child, add_child(Id, Child, State)};
-    {error, Reason} ->
-      {error, {start_child, Id, Reason}}
   end.
 
 -spec do_stop_child(child_id(), term(), state()) ->
