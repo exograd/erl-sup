@@ -92,10 +92,9 @@ init([Module, Options]) ->
   start_children(Specs, State).
 
 -spec terminate(et_gen_server:terminate_reason(), state()) -> ok.
-terminate(Reason, _State) ->
+terminate(Reason, State) ->
   ?LOG_DEBUG("terminating (reason: ~0tp)", [Reason]),
-  %% TODO stop all children
-  ok.
+  stop_children(State).
 
 -spec handle_call(term(), {pid(), et_gen_server:request_id()}, state()) ->
         et_gen_server:handle_call_ret(state()).
@@ -159,6 +158,31 @@ start_children([{Id, Spec} | Children], State) ->
       start_children(Children, State2);
     {error, Reason} ->
       {stop, {child_start, Reason}}
+  end.
+
+-spec stop_children(state()) -> ok.
+stop_children(State = #{children := Children}) ->
+  maps:foreach(fun (Id, _) ->
+                   do_stop_child(Id, shutdown, State)
+               end, Children),
+  wait_for_children(State).
+
+-spec wait_for_children(state()) -> ok.
+wait_for_children(#{children := Children}) when map_size(Children) == 0 ->
+  ok;
+wait_for_children(State = #{children := Children}) ->
+  receive
+    {stop_timeout, Id} ->
+      case maps:find(Id, Children) of
+        {ok, #{pid := Pid}} ->
+          exit(Pid, kill),
+          wait_for_children(remove_child(Id, Pid, State));
+        error ->
+          wait_for_children(State)
+      end;
+    {'EXIT', Pid, _} ->
+      Id = child_id(Pid, State),
+      wait_for_children(remove_child(Id, Pid, State))
   end.
 
 -spec do_start_child(child_id(), child_spec(), state()) ->
