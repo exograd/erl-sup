@@ -136,14 +136,19 @@ handle_info({stop_timeout, Id}, State = #{children := Children}) ->
     error ->
       {noreply, State}
   end;
-handle_info({'EXIT', Pid, normal}, State) ->
-  Id = child_id(Pid, State),
-  ?LOG_DEBUG("child ~0tp (~p) exited", [Id, Pid]),
-  {noreply, remove_child(Id, Pid, State)};
-handle_info({'EXIT', Pid, Reason}, State) ->
-  Id = child_id(Pid, State),
-  ?LOG_ERROR("child ~0tp (~p) exited: ~tp", [Id, Pid, Reason]),
-  {noreply, remove_child(Id, Pid, State)};
+handle_info({'EXIT', Pid, Reason}, State = #{children_ids := Ids}) ->
+  case maps:find(Pid, Ids) of
+    {ok, Id} ->
+      case Reason of
+        normal ->
+          ?LOG_DEBUG("child ~0tp (~p) exited", [Id, Pid]);
+        _ ->
+          ?LOG_ERROR("child ~0tp (~p) exited: ~tp", [Id, Pid, Reason])
+      end,
+      {noreply, remove_child(Id, Pid, State)};
+    error ->
+      {noreply, State}
+  end;
 handle_info(Msg, State) ->
   ?LOG_WARNING("unhandled info ~p", [Msg]),
   {noreply, State}.
@@ -189,7 +194,7 @@ stop_children(State = #{children := Children}) ->
 -spec wait_for_children(state()) -> ok.
 wait_for_children(#{children := Children}) when map_size(Children) == 0 ->
   ok;
-wait_for_children(State = #{children := Children}) ->
+wait_for_children(State = #{children_ids := Ids, children := Children}) ->
   receive
     {stop_timeout, Id} ->
       case maps:find(Id, Children) of
@@ -200,8 +205,12 @@ wait_for_children(State = #{children := Children}) ->
           wait_for_children(State)
       end;
     {'EXIT', Pid, _} ->
-      Id = child_id(Pid, State),
-      wait_for_children(remove_child(Id, Pid, State))
+      case maps:find(Pid, Ids) of
+        {ok, Id} ->
+          wait_for_children(remove_child(Id, Pid, State));
+        error ->
+          wait_for_children(State)
+      end
   end.
 
 -spec do_stop_child(child_id(), term(), state()) ->
@@ -225,15 +234,6 @@ call_stop(#{spec := #{stop := Stop}}, Reason) ->
   Stop(Reason);
 call_stop(#{pid := Pid}, Reason) ->
   exit(Pid, Reason).
-
--spec child_id(pid(), state()) -> child_id().
-child_id(Pid, #{children_ids := Ids}) ->
-  case maps:find(Pid, Ids) of
-    {ok, Id} ->
-      Id;
-    error ->
-      error({unknown_child_pid, Pid})
-  end.
 
 -spec add_child(child_id(), child(), state()) -> state().
 add_child(Id, Child = #{pid := Pid},
