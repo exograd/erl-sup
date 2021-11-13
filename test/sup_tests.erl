@@ -21,3 +21,11 @@ init_exception_test() ->
   ?assertMatch({error, {start_child, b, _}}, init_exception_sup:start_link()),
   ?assertEqual(undefined, erlang:whereis(a)),
   ?assertEqual(undefined, erlang:whereis(b)).
+
+dynamic_child_test() ->
+  {ok, Sup} = static_sup:start_link(),
+  {ok, D} = sup:start_child(Sup, d1, #{start => fun test_child:start_link/2,
+                                        start_args => [d1, #{}]}),
+  ?assert(erlang:is_process_alive(D)),
+  static_sup:stop(),
+  ?assertNot(erlang:is_process_alive(D)).
