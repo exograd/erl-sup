@@ -4,7 +4,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/2]).
+-export([start_link/2, stop/2]).
 -export([init/1, terminate/2, handle_call/3, handle_cast/2, handle_info/2]).
 
 -export_type([options/0, exception_spec/0]).
@@ -25,9 +25,14 @@
 start_link(Name, Options) ->
   gen_server:start_link({local, Name}, ?MODULE, [Name, Options], []).
 
+-spec stop(et_gen_server:ref(), term()) -> ok.
+stop(Ref, Reason) ->
+  gen_server:stop(Ref, Reason, infinity).
+
 -spec init(list()) -> et_gen_server:init_ret(state()).
 init([Name, Options]) ->
-  ?LOG_INFO("starting ~p (~0tp)", [Name, Options]),
+  logger:update_process_metadata(#{domain => [sup, test_child, Name]}),
+  ?LOG_INFO("starting (options ~0tp)", [Options]),
   maybe_signal_init_exception(Options),
   case maps:find(init_error, Options) of
     {ok, Term} ->
@@ -47,7 +52,8 @@ maybe_signal_init_exception(_) ->
   ok.
 
 -spec terminate(et_gen_server:terminate_reason(), state()) -> ok.
-terminate(_Reason, _State) ->
+terminate(_Reason, #{name := Name}) ->
+  ?LOG_INFO("terminating"),
   ok.
 
 -spec handle_call(term(), {pid(), et_gen_server:request_id()}, state()) ->

@@ -5,6 +5,7 @@
   {applications,
    [kernel,
     stdlib,
-    et]},
+    et,
+    backoff]},
   {env, []},
   {modules, []}]}.

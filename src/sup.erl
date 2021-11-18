@@ -31,7 +31,8 @@
 -type child_spec() ::
         #{start := start_fun(),
           start_args => [term()],
-          stop => stop_fun()}.
+          stop => stop_fun(),
+          transient => boolean()}.
 
 -type child_specs() ::
         #{child_id() := child_spec()}.
@@ -44,8 +45,10 @@
 
 -type child() ::
         #{spec := child_spec(),
-          pid := pid(),
-          stop_timer => reference()}.
+          pid => pid(),
+          stop_timer => reference(),
+          restart_timer => reference(),
+          backoff => backoff:backoff()}.
 
 -callback children() -> child_specs().
 
@@ -129,14 +132,15 @@ handle_cast(Msg, State) ->
 -spec handle_info(term(), state()) -> et_gen_server:handle_info_ret(state()).
 handle_info({stop_timeout, Id}, State = #{children := Children}) ->
   case maps:find(Id, Children) of
-    {ok, #{pid := Pid}} ->
+    {ok, Child = #{pid := Pid}} ->
       ?LOG_WARNING("child ~0tp (~p) timed out", [Id, Pid]),
       exit(Pid, kill),
-      {noreply, remove_child(Id, Pid, State)};
+      {noreply, restart_or_remove_child(Id, Child, State)};
     error ->
       {noreply, State}
   end;
-handle_info({'EXIT', Pid, Reason}, State = #{children_ids := Ids}) ->
+handle_info({'EXIT', Pid, Reason}, State = #{children_ids := Ids,
+                                             children := Children}) ->
   case maps:find(Pid, Ids) of
     {ok, Id} ->
       case Reason of
@@ -145,7 +149,8 @@ handle_info({'EXIT', Pid, Reason}, State = #{children_ids := Ids}) ->
         _ ->
           ?LOG_ERROR("child ~0tp (~p) exited: ~tp", [Id, Pid, Reason])
       end,
-      {noreply, remove_child(Id, Pid, State)};
+      Child = maps:get(Id, Children),
+      {noreply, restart_or_remove_child(Id, Child, State)};
     error ->
       {noreply, State}
   end;
@@ -220,6 +225,7 @@ do_stop_child(Id, Reason, State = #{children := Children}) ->
     {ok, #{stop_timer := _}} ->
       {error, {child_already_stopping, Id}};
     {ok, Child} ->
+      ?LOG_DEBUG("stopping child ~0tp", [Id]),
       call_stop(Child, Reason),
       Timeout = stop_timeout(State),
       Timer = erlang:send_after(Timeout, self(), {stop_timeout, Id}),
@@ -234,6 +240,39 @@ call_stop(#{pid := Pid, spec := #{stop := Stop}}, Reason) ->
   Stop(Pid, Reason);
 call_stop(#{pid := Pid}, Reason) ->
   exit(Pid, Reason).
+
+-spec restart_or_remove_child(child_id(), child(), state()) -> state().
+restart_or_remove_child(Id, Child = #{spec := Spec, pid := Pid}, State) ->
+  State2 = remove_child(Id, Pid, State),
+  case maps:get(transient, Spec, false) of
+    true ->
+      State2;
+    false ->
+      Child2 = maps:without([pid, stop_timer], Child),
+      case do_restart_child(Id, Child2, State2) of
+        {ok, State3} ->
+          State3;
+        {error, Reason} ->
+          ?LOG_ERROR("cannot restart child ~0tp: ~tp", [Id, Reason]),
+          State2
+      end
+  end.
+
+-spec do_restart_child(child_id(), child(), state()) ->
+        {ok, state()} | {error, error_reason()}.
+do_restart_child(Id, Child = #{spec := (Spec = #{start := Start})},
+                 State) ->
+  ?LOG_DEBUG("restarting child ~0tp (start: ~0tp)", [Id, Start]),
+  Args = maps:get(start_args, Spec, []),
+  case erlang:apply(Start, Args) of
+    {ok, Pid} ->
+      ?LOG_DEBUG("child ~0tp restarted (pid: ~p)", [Id, Pid]),
+      Child2 = maps:without([restart_timer, backoff],
+                            Child#{pid => Pid}),
+      {ok, add_child(Id, Child2, State)};
+    {error, Reason} ->
+      {error, Reason}
+  end.
 
 -spec add_child(child_id(), child(), state()) -> state().
 add_child(Id, Child = #{pid := Pid},
