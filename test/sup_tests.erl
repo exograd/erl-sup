@@ -61,8 +61,8 @@ dynamic_child_only_test() ->
   after 250 ->
       error(monitor_timeout)
   end,
-  empty_sup:stop(),
-  ?assertNot(erlang:is_process_alive(D)).
+  ?assertNot(erlang:is_process_alive(D)),
+  empty_sup:stop().
 
 dynamic_transient_child_only_test() ->
   {ok, Sup} = empty_sup:start_link(),
@@ -79,5 +79,5 @@ dynamic_transient_child_only_test() ->
   after 250 ->
       error(monitor_timeout)
   end,
-  empty_sup:stop(),
-  ?assertNot(erlang:is_process_alive(D)).
+  ?assertNot(erlang:is_process_alive(D)),
+  empty_sup:stop().
