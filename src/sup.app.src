@@ -2,7 +2,6 @@
  [{description, "A simple supervisor."},
   {vsn, "git"},
   {registered, []},
-  {mod, {sup_app, []}},
   {applications,
    [kernel,
     stdlib,
