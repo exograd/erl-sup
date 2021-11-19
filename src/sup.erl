@@ -12,7 +12,7 @@
               child_specs/0, start_fun/0, stop_fun/0]).
 
 -type options() ::
-        #{stop_timeout := pos_integer()}.
+        #{stop_timeout => pos_integer()}.
 
 -type error_reason() ::
         {duplicate_child_id, child_id()}
