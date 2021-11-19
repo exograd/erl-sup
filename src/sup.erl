@@ -18,8 +18,7 @@
 -type error_reason() ::
         {duplicate_child_id, child_id()}
       | {unknown_child_id, child_id()}
-      | {start_child, child_id(), term()}
-      | {child_already_stopping, child_id()}.
+      | {start_child, child_id(), term()}.
 
 -type state() ::
         #{module := module(),
@@ -258,11 +257,9 @@ wait_for_children(State = #{children_ids := Ids, children := Children}) ->
 do_stop_child(Id, Reason, State = #{children := Children}) ->
   case maps:find(Id, Children) of
     {ok, #{stop_timer := _}} ->
-      {error, {child_already_stopping, Id}};
-    {ok, Child = #{restart_timer := Timer}} ->
-      erlang:cancel_timer(Timer),
-      Child2 = maps:without([restart_timer, backoff], Child),
-      {ok, State#{children => Children#{Id => Child2}}};
+      {ok, State};
+    {ok, #{restart_timer := _}} ->
+      {ok, State};
     {ok, Child} ->
       ?LOG_DEBUG("stopping child ~0tp", [Id]),
       call_stop(Child, Reason),
