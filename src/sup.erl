@@ -135,7 +135,7 @@ handle_info({stop_timeout, Id}, State = #{children := Children}) ->
     {ok, Child = #{pid := Pid}} ->
       ?LOG_WARNING("child ~0tp (~p) timed out", [Id, Pid]),
       exit(Pid, kill),
-      {noreply, restart_or_remove_child(Id, Child, State)};
+      {noreply, remove_or_restart_child(Id, Child, State)};
     error ->
       {noreply, State}
   end;
@@ -150,7 +150,27 @@ handle_info({'EXIT', Pid, Reason}, State = #{children_ids := Ids,
           ?LOG_ERROR("child ~0tp (~p) exited: ~tp", [Id, Pid, Reason])
       end,
       Child = maps:get(Id, Children),
-      {noreply, restart_or_remove_child(Id, Child, State)};
+      {noreply, remove_or_restart_child(Id, Child, State)};
+    error ->
+      {noreply, State}
+  end;
+handle_info({restart_child, Id}, State = #{children := Children}) ->
+  %% When stopping a child while it is waiting to be restarted, we cancel the
+  %% restart timer. We still have to handle the case where the {restart_child,
+  %% _} message was already sent; in that case, we will get here, but there
+  %% will be no restart_timer in the child because we removed it in
+  %% do_stop_child/3. We just ignore it.
+  case maps:find(Id, Children) of
+    {ok, Child = #{restart_timer := _}} ->
+      case do_restart_child(Id, Child, State) of
+        {ok, State2} ->
+          {noreply, State2};
+        {error, Reason} ->
+          ?LOG_ERROR("cannot restart child ~0tp: ~tp", [Id, Reason]),
+          {noreply, State}
+      end;
+    {ok, _Child} ->
+      {noreply, State};
     error ->
       {noreply, State}
   end;
@@ -224,6 +244,10 @@ do_stop_child(Id, Reason, State = #{children := Children}) ->
   case maps:find(Id, Children) of
     {ok, #{stop_timer := _}} ->
       {error, {child_already_stopping, Id}};
+    {ok, Child = #{restart_timer := Timer}} ->
+      erlang:cancel_timer(Timer),
+      Child2 = maps:without([restart_timer, backoff], Child),
+      {ok, State#{children => Children#{Id => Child2}}};
     {ok, Child} ->
       ?LOG_DEBUG("stopping child ~0tp", [Id]),
       call_stop(Child, Reason),
@@ -241,21 +265,17 @@ call_stop(#{pid := Pid, spec := #{stop := Stop}}, Reason) ->
 call_stop(#{pid := Pid}, Reason) ->
   exit(Pid, Reason).
 
--spec restart_or_remove_child(child_id(), child(), state()) -> state().
-restart_or_remove_child(Id, Child = #{spec := Spec, pid := Pid}, State) ->
+-spec remove_or_restart_child(child_id(), child(), state()) -> state().
+remove_or_restart_child(Id, Child = #{spec := Spec, pid := Pid},
+                        State = #{children := Children}) ->
   State2 = remove_child(Id, Pid, State),
   case maps:get(transient, Spec, false) of
     true ->
       State2;
     false ->
-      Child2 = maps:without([pid, stop_timer], Child),
-      case do_restart_child(Id, Child2, State2) of
-        {ok, State3} ->
-          State3;
-        {error, Reason} ->
-          ?LOG_ERROR("cannot restart child ~0tp: ~tp", [Id, Reason]),
-          State2
-      end
+      Child2 = maps:without([pid, stop_timer, restart_timer, backoff], Child),
+      Child3 = schedule_child_restart(Id, Child2),
+      State#{children => Children#{Id => Child3}}
   end.
 
 -spec do_restart_child(child_id(), child(), state()) ->
@@ -267,12 +287,26 @@ do_restart_child(Id, Child = #{spec := (Spec = #{start := Start})},
   case erlang:apply(Start, Args) of
     {ok, Pid} ->
       ?LOG_DEBUG("child ~0tp restarted (pid: ~p)", [Id, Pid]),
-      Child2 = maps:without([restart_timer, backoff],
-                            Child#{pid => Pid}),
+      Child2 = maps:without([restart_timer, backoff], Child#{pid => Pid}),
       {ok, add_child(Id, Child2, State)};
     {error, Reason} ->
+      %% TODO schedule restart (i.e. return state())
       {error, Reason}
   end.
+
+-spec schedule_child_restart(child_id(), child()) -> child().
+schedule_child_restart(Id, Child) ->
+  Backoff = case maps:find(backoff, Child) of
+              {ok, OldBackoff} ->
+                backoff:fail(OldBackoff);
+              error ->
+                backoff:type(backoff:init(1_000, 60_000), jitter)
+            end,
+  Delay = backoff:get(Backoff),
+  ?LOG_DEBUG("restart child ~0tp in ~bms", [Id, Delay]),
+  Timer = erlang:send_after(Delay, self(), {restart_child, Id}),
+  Child#{restart_timer => Timer,
+         backoff => Backoff}.
 
 -spec add_child(child_id(), child(), state()) -> state().
 add_child(Id, Child = #{pid := Pid},

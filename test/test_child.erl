@@ -52,7 +52,7 @@ maybe_signal_init_exception(_) ->
   ok.
 
 -spec terminate(et_gen_server:terminate_reason(), state()) -> ok.
-terminate(_Reason, #{name := Name}) ->
+terminate(_Reason, _State) ->
   ?LOG_INFO("terminating"),
   ok.
 
