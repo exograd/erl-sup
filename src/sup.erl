@@ -13,7 +13,8 @@
               child_status/0, child_status_table/0]).
 
 -type options() ::
-        #{stop_timeout => pos_integer()}.
+        #{stop_timeout => pos_integer(),
+          restart_delay => pos_integer()}.
 
 -type error_reason() ::
         {duplicate_child_id, child_id()}
@@ -284,7 +285,7 @@ remove_or_restart_child(Id, Child = #{spec := Spec, pid := Pid},
       State2;
     false ->
       Child2 = maps:without([pid, stop_timer, restart_timer], Child),
-      Child3 = schedule_child_restart(Id, Child2),
+      Child3 = schedule_child_restart(Id, Child2, State2),
       State#{children => Children#{Id => Child3}}
   end.
 
@@ -301,14 +302,14 @@ do_restart_child(Id, Child = #{spec := (Spec = #{start := Start})},
       {ok, add_child(Id, Child2, State)};
     {error, Reason} ->
       ?LOG_ERROR("cannot restart child ~0tp: ~tp", [Id, Reason]),
-      Child2 = schedule_child_restart(Id, Child),
+      Child2 = schedule_child_restart(Id, Child, State),
       State2 = State#{children => Children#{Id := Child2}},
       {error, Reason, State2}
   end.
 
--spec schedule_child_restart(child_id(), child()) -> child().
-schedule_child_restart(Id, Child) ->
-  Delay = 1000,
+-spec schedule_child_restart(child_id(), child(), state()) -> child().
+schedule_child_restart(Id, Child, State) ->
+  Delay = restart_delay(State),
   Timer = erlang:send_after(Delay, self(), {restart_child, Id}),
   Child#{restart_timer => Timer}.
 
@@ -339,3 +340,9 @@ stop_timeout(#{options := #{stop_timeout := Timeout}}) ->
   Timeout;
 stop_timeout(_) ->
   5000.
+
+-spec restart_delay(state()) -> pos_integer().
+restart_delay(#{options := #{restart_delay := Delay}}) ->
+  Delay;
+restart_delay(_) ->
+  1000.
