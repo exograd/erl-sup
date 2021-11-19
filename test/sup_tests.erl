@@ -5,10 +5,14 @@
 static_children_test() ->
   {ok, Sup} = static_sup:start_link(),
   Children = sup:children(Sup),
-  ?assertMatch(#{a := _, b := _, c := _}, Children),
-  ?assert(lists:all(fun erlang:is_process_alive/1, maps:values(Children))),
+  ?assertMatch(#{a := {running, _},
+                 b := {running, _},
+                 c := {running, _}},
+               Children),
+  Pids = [Pid || {running, Pid} <- maps:values(Children)],
+  ?assert(lists:all(fun erlang:is_process_alive/1, Pids)),
   static_sup:stop(),
-  ?assertNot(lists:any(fun erlang:is_process_alive/1, maps:values(Children))).
+  ?assertNot(lists:any(fun erlang:is_process_alive/1, Pids)).
 
 init_error_test() ->
   process_flag(trap_exit, true),

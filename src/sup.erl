@@ -224,10 +224,13 @@ do_start_child(Id, Spec = #{start := Start}, State) ->
 
 -spec stop_children(state()) -> ok.
 stop_children(State = #{children := Children}) ->
-  maps:foreach(fun (Id, _) ->
-                   do_stop_child(Id, shutdown, State)
-               end, Children),
-  wait_for_children(State).
+  %% do_stop_child/3 can only fail if the child id does not exist, which
+  %% cannot happen here.
+  State2 = maps:fold(fun (Id, _, S) ->
+                         {ok, S2} = do_stop_child(Id, shutdown, S),
+                         S2
+                     end, State, Children),
+  wait_for_children(State2).
 
 -spec wait_for_children(state()) -> ok.
 wait_for_children(#{children := Children}) when map_size(Children) == 0 ->
@@ -257,8 +260,14 @@ do_stop_child(Id, Reason, State = #{children := Children}) ->
   case maps:find(Id, Children) of
     {ok, #{stop_timer := _}} ->
       {ok, State};
-    {ok, #{restart_timer := _}} ->
-      {ok, State};
+    {ok, #{restart_timer := Timer}} ->
+      case Reason of
+        shutdown ->
+          erlang:cancel_timer(Timer),
+          {ok, State#{children => maps:remove(Id, Children)}};
+        _ ->
+          {ok, State}
+      end;
     {ok, Child} ->
       ?LOG_DEBUG("stopping child ~0tp", [Id]),
       call_stop(Child, Reason),
