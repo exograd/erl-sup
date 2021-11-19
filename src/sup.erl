@@ -47,8 +47,7 @@
         #{spec := child_spec(),
           pid => pid(),
           stop_timer => reference(),
-          restart_timer => reference(),
-          backoff => backoff:backoff()}.
+          restart_timer => reference()}.
 
 -type child_status() ::
         {running, pid()}
@@ -179,9 +178,8 @@ handle_info({restart_child, Id}, State = #{children := Children}) ->
       case do_restart_child(Id, Child, State) of
         {ok, State2} ->
           {noreply, State2};
-        {error, Reason} ->
-          ?LOG_ERROR("cannot restart child ~0tp: ~tp", [Id, Reason]),
-          {noreply, State}
+        {error, _, State2} ->
+          {noreply, State2}
       end;
     {ok, _Child} ->
       {noreply, State};
@@ -285,40 +283,34 @@ remove_or_restart_child(Id, Child = #{spec := Spec, pid := Pid},
     true ->
       State2;
     false ->
-      Child2 = maps:without([pid, stop_timer, restart_timer, backoff], Child),
+      Child2 = maps:without([pid, stop_timer, restart_timer], Child),
       Child3 = schedule_child_restart(Id, Child2),
       State#{children => Children#{Id => Child3}}
   end.
 
 -spec do_restart_child(child_id(), child(), state()) ->
-        {ok, state()} | {error, error_reason()}.
+        {ok, state()} | {error, error_reason(), state()}.
 do_restart_child(Id, Child = #{spec := (Spec = #{start := Start})},
-                 State) ->
+                 State = #{children := Children}) ->
   ?LOG_DEBUG("restarting child ~0tp (start: ~0tp)", [Id, Start]),
   Args = maps:get(start_args, Spec, []),
   case erlang:apply(Start, Args) of
     {ok, Pid} ->
       ?LOG_DEBUG("child ~0tp restarted (pid: ~p)", [Id, Pid]),
-      Child2 = maps:without([restart_timer, backoff], Child#{pid => Pid}),
+      Child2 = maps:without([restart_timer], Child#{pid => Pid}),
       {ok, add_child(Id, Child2, State)};
     {error, Reason} ->
-      %% TODO schedule restart (i.e. return state())
-      {error, Reason}
+      ?LOG_ERROR("cannot restart child ~0tp: ~tp", [Id, Reason]),
+      Child2 = schedule_child_restart(Id, Child),
+      State2 = State#{children => Children#{Id := Child2}},
+      {error, Reason, State2}
   end.
 
 -spec schedule_child_restart(child_id(), child()) -> child().
 schedule_child_restart(Id, Child) ->
-  Backoff = case maps:find(backoff, Child) of
-              {ok, OldBackoff} ->
-                backoff:fail(OldBackoff);
-              error ->
-                backoff:type(backoff:init(1_000, 60_000), jitter)
-            end,
-  Delay = backoff:get(Backoff),
-  ?LOG_DEBUG("restart child ~0tp in ~bms", [Id, Delay]),
+  Delay = 1000,
   Timer = erlang:send_after(Delay, self(), {restart_child, Id}),
-  Child#{restart_timer => Timer,
-         backoff => Backoff}.
+  Child#{restart_timer => Timer}.
 
 -spec add_child(child_id(), child(), state()) -> state().
 add_child(Id, Child = #{pid := Pid},
