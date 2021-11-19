@@ -9,7 +9,8 @@
 -export([init/1, terminate/2, handle_call/3, handle_cast/2, handle_info/2]).
 
 -export_type([options/0, error_reason/0, child_id/0, child_spec/0,
-              child_specs/0, start_fun/0, stop_fun/0]).
+              child_specs/0, start_fun/0, stop_fun/0,
+              child_status/0, child_status_table/0]).
 
 -type options() ::
         #{stop_timeout => pos_integer()}.
@@ -50,6 +51,14 @@
           restart_timer => reference(),
           backoff => backoff:backoff()}.
 
+-type child_status() ::
+        {running, pid()}
+      | {stopping, pid()}
+      | restarting.
+
+-type child_status_table() ::
+        #{child_id() := child_status()}.
+
 -callback children() -> child_specs().
 
 -spec start_link(module(), options()) -> et_gen_server:start_ret().
@@ -74,7 +83,7 @@ start_child(Ref, Id, Spec) ->
 stop_child(Ref, Id) ->
   call(Ref, {stop_child, Id}).
 
--spec children(et_gen_server:ref()) -> #{child_id() := pid()}.
+-spec children(et_gen_server:ref()) -> child_status_table().
 children(Ref) ->
   call(Ref, children).
 
@@ -116,10 +125,16 @@ handle_call({stop_child, Id}, _From, State) ->
       {reply, {error, Reason}, State}
   end;
 handle_call(children, _From, State = #{children := Children}) ->
-  ChildrenData = maps:fold(fun (Id, #{pid := Pid}, Acc) ->
-                               Acc#{Id => Pid}
-                           end, #{}, Children),
-  {reply, ChildrenData, State};
+  F = fun
+        (Id, #{pid := Pid, stop_timer := _}, Acc) ->
+          Acc#{Id => {stopping, Pid}};
+        (Id, #{restart_timer := _}, Acc) ->
+          Acc#{Id => restarting};
+        (Id, #{pid := Pid}, Acc) ->
+          Acc#{Id => {running, Pid}}
+      end,
+  Statuses = maps:fold(F, #{}, Children),
+  {reply, Statuses, State};
 handle_call(Msg, From, State) ->
   ?LOG_WARNING("unhandled call ~p from ~p", [Msg, From]),
   {reply, unhandled, State}.
